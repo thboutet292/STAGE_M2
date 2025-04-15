@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="fr">
+	<head>
+		<meta charset="UTF-8">
+		<title>Upload des fichiers pour la détection des sCDS</title>
+	</head>
+	<body>
+		<h1>Déposez vos fichiers</h1>
+		<form method="post" enctype="multipart/form-data">
+			<label for="fasta">Fichier FASTA du génome :</label><br>
+			<input type="file" name="fasta" id="fasta" required><br><br>
+			
+			<label for="embl_files">Fichiers EMBL (sélection multiple) :</label><br>
+			<input type="file" name="embl_files" id="embl_files" multiple required><br><br>
+			
+			<label for="output_cds">Nom du fichier de sortie pour les CDS :</label><br>
+			<input type="text" name="output_cds" id="output_cds" value="result_CDS.fasta" required><br><br>
+			
+			<label for="output_prot">Nom du fichier de sortie pour les protéines :</label><br>
+			<input type="text" name="output_prot" id="output_prot" value="result_prot.fasta" required><br><br>
+			
+			<input type="submit" value="Analyser">
+		</form>
+	</body>
+</html>
