@@ -1,0 +1,24 @@
+{
+  "version": "1.2",
+  "dbname": "BDD2_db",
+  "dbtype": "Protein",
+  "db-version": 5,
+  "description": "/home/thomas/STAGE2/STAGE_M2/sCDS_web/result/work_sCDS_not_ortholog.fasta",
+  "number-of-letters": 1938016,
+  "number-of-sequences": 50497,
+  "last-updated": "2025-04-23T13:51:00",
+  "number-of-volumes": 1,
+  "bytes-total": 11541147,
+  "bytes-to-cache": 2392650,
+  "files": [
+    "BDD2_db.pdb",
+    "BDD2_db.phr",
+    "BDD2_db.pin",
+    "BDD2_db.pog",
+    "BDD2_db.pos",
+    "BDD2_db.pot",
+    "BDD2_db.psq",
+    "BDD2_db.ptf",
+    "BDD2_db.pto"
+  ]
+}
