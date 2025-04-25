@@ -1,331 +1,148 @@
 #!/usr/bin/env python3
-import sys
 import os
 import re
+import shutil
+import subprocess
 import tempfile
-from flask import Flask, render_template, request, redirect, url_for, send_file
-from werkzeug.utils import secure_filename
-from Bio import SeqIO
-from Bio.Seq import Seq
 
-# Détermine le chemin absolu du dossier templates (qui est dans le répertoire parent de bin)
-template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "templates")
+from flask import (
+    Flask, request, render_template,
+    redirect, url_for, Response,
+    stream_with_context, send_from_directory, abort
+)
 
-# Crée l'application Flask en spécifiant le dossier des templates
-app = Flask(__name__, template_folder=template_dir)
+BASE_DIR   = os.path.dirname(os.path.dirname(__file__))
+BIN_DIR    = os.path.join(BASE_DIR, 'bin')
+DATA_DIR   = os.path.join(BASE_DIR, 'data')
+RESULT_DIR = os.path.join(BASE_DIR, 'result')
+os.makedirs(RESULT_DIR, exist_ok=True)
 
-# Configure le dossier pour les uploads
-app.config["UPLOAD_FOLDER"] = tempfile.gettempdir()
+app = Flask(__name__, template_folder=os.path.join(BASE_DIR, 'templates'))
 
-###############################################################################
-# Fonctions de traitement (adaptées de votre script)
+def safe(fn):
+    return os.path.basename(fn)
 
-def get_short_id(s):
-    """
-    Extracts the short identifier from a record's header.
-    Examples:
-      - For a FASTA header like ">CM017447.1 Antonospora ...", returns "CM017447.1"
-      - For an EMBL record like "CM017455.1ANTONOSPOR", returns "CM017455.1"
-    """
-    m = re.search(r'(CM\d+\.\d+)', s)
-    if m:
-        return m.group(1)
-    else:
-        return s.split()[0]
-
-def contains_polyA_signal(window):
-    allowed_signals = ["AATAAA", "AATTAAA"]
-    for motif in allowed_signals:
-        motif_len = len(motif)
-        for i in range(len(window) - motif_len + 1):
-            candidate = window[i:i+motif_len]
-            mismatches = sum(1 for a, b in zip(candidate, motif) if a != b)
-            if mismatches <= 1:
-                return candidate, i, motif
-    return None, None, None
-
-def find_orfs(seq, strand="+", min_length=80):
-    start_codon = "ATG"
-    stop_codons = {"TAA", "TAG", "TGA"}
-    orfs = []
-    for frame in range(3):
-        i = frame
-        while i <= len(seq) - 3:
-            codon = seq[i:i+3]
-            if codon == start_codon:
-                for j in range(i+3, len(seq)-2, 3):
-                    curr_codon = seq[j:j+3]
-                    if curr_codon in stop_codons:
-                        orf_length = j + 3 - i
-                        if orf_length >= min_length:
-                            if i >= 20:
-                                upstream = seq[i-20:i]
-                                if ("GGG" in upstream) or ("CCC" in upstream):
-                                    valid = True
-                                    signal_type = "strong"
-                                else:
-                                    at_count = upstream.count("A") + upstream.count("T")
-                                    if at_count / 15 >= 0.8:
-                                        valid = True
-                                        signal_type = "weak"
-                                    else:
-                                        valid = False
-                                if valid:
-                                    orf_data = {
-                                        "strand": strand,
-                                        "frame": frame,
-                                        "start": i,
-                                        "end": j+3,
-                                        "sequence": seq[i:j+3],
-                                        "upstream": upstream,
-                                        "signal_type": signal_type
-                                    }
-                                    if orf_length < 244:
-                                        polyA_window_start = max(j - 5, 0)
-                                        polyA_window_end = min(j + 60, len(seq))
-                                        polyA_window = seq[polyA_window_start:polyA_window_end]
-                                        polyA_signal, relative_index, motif_used = contains_polyA_signal(polyA_window)
-                                        if polyA_signal is None:
-                                            break
-                                        else:
-                                            polyA_abs_start = polyA_window_start + relative_index
-                                            polyA_abs_end = polyA_abs_start + len(polyA_signal)
-                                            orf_data["polyA_signal"] = polyA_signal
-                                            orf_data["polyA_coords"] = (polyA_abs_start, polyA_abs_end)
-                                    orfs.append(orf_data)
-                        break
-            i += 3
-    return orfs
-
-def scan_genome(input_fasta):
-    results = []
-    for record in SeqIO.parse(input_fasta, "fasta"):
-        short_id = get_short_id(record.id)
-        seq = str(record.seq).upper()
-        record_results = {"id": short_id, "orfs": []}
-        orfs_forward = find_orfs(seq, strand="+")
-        record_results["orfs"].extend([
-            {
-                "record_id": short_id,
-                "strand": orf["strand"],
-                "frame": orf["frame"],
-                "start": orf["start"],
-                "end": orf["end"],
-                "sequence": orf["sequence"],
-                "upstream": orf["upstream"],
-                "signal_type": orf["signal_type"],
-                "polyA_signal": orf.get("polyA_signal"),
-                "polyA_coords": orf.get("polyA_coords")
-            } for orf in orfs_forward
-        ])
-        rev_seq = str(Seq(seq).reverse_complement())
-        orfs_reverse = find_orfs(rev_seq, strand="-")
-        for orf in orfs_reverse:
-            L = len(seq)
-            orig_start = L - orf["end"]
-            orig_end = L - orf["start"]
-            record_results["orfs"].append({
-                "record_id": short_id,
-                "strand": orf["strand"],
-                "frame": orf["frame"],
-                "start": orig_start,
-                "end": orig_end,
-                "sequence": orf["sequence"],
-                "upstream": orf["upstream"],
-                "signal_type": orf["signal_type"],
-                "polyA_signal": orf.get("polyA_signal"),
-                "polyA_coords": orf.get("polyA_coords")
-            })
-        results.append(record_results)
-    return results
-
-def parse_embl_cds_from_directory(embl_dir):
-    annotated_cdss = {}
-    for filename in os.listdir(embl_dir):
-        if filename.endswith(".embl"):
-            filepath = os.path.join(embl_dir, filename)
-            for record in SeqIO.parse(filepath, "embl"):
-                short_id = get_short_id(record.id)
-                cds_list = []
-                for feature in record.features:
-                    if feature.type == "CDS":
-                        cds_start = int(feature.location.start)
-                        cds_end = int(feature.location.end)
-                        cds_strand = feature.location.strand
-                        cds_list.append((cds_start, cds_end, cds_strand))
-                if short_id in annotated_cdss:
-                    annotated_cdss[short_id].extend(cds_list)
-                else:
-                    annotated_cdss[short_id] = cds_list
-    return annotated_cdss
-
-def filter_nested_orfs(orfs):
-    filtered = orfs[:]
-    changed = True
-    while changed:
-        changed = False
-        remove_indices = set()
-        for i in range(len(filtered)):
-            for j in range(i+1, len(filtered)):
-                if filtered[i]["strand"] == filtered[j]["strand"] and filtered[i]["frame"] == filtered[j]["frame"]:
-                    if filtered[i]["start"] >= filtered[j]["start"] and filtered[i]["end"] <= filtered[j]["end"]:
-                        delta = filtered[i]["start"] - filtered[j]["start"]
-                        if delta >= 30:
-                            remove_indices.add(i)
-                        else:
-                            if filtered[j]["signal_type"] == "weak" and filtered[i]["signal_type"] == "strong":
-                                remove_indices.add(j)
-                            else:
-                                remove_indices.add(i)
-                    elif filtered[j]["start"] >= filtered[i]["start"] and filtered[j]["end"] <= filtered[i]["end"]:
-                        delta = filtered[j]["start"] - filtered[i]["start"]
-                        if delta >= 30:
-                            remove_indices.add(j)
-                        else:
-                            if filtered[i]["signal_type"] == "weak" and filtered[j]["signal_type"] == "strong":
-                                remove_indices.add(i)
-                            else:
-                                remove_indices.add(j)
-        if remove_indices:
-            filtered = [filtered[k] for k in range(len(filtered)) if k not in remove_indices]
-            changed = True
-    return filtered
-
-def filter_overlapping_small_orfs(orfs):
-    large_orfs = [orf for orf in orfs if len(orf["sequence"]) >= 244]
-    filtered = []
-    for orf in orfs:
-        if len(orf["sequence"]) < 244:
-            overlap = False
-            for large in large_orfs:
-                if orf["start"] < large["end"] and orf["end"] > large["start"]:
-                    overlap = True
-                    break
-            if not overlap:
-                filtered.append(orf)
-    return filtered
-
-def write_output(orfs_results, cds_filename, prot_filename):
-    cds_records = []
-    prot_records = []
-    for record in orfs_results:
-        rec_id = record["id"]
-        filtered_orfs = filter_nested_orfs(record["orfs"])
-        filtered_orfs = filter_overlapping_small_orfs(filtered_orfs)
-        for orf in filtered_orfs:
-            if orf["strand"] == "+":
-                header = f">{rec_id}:{orf['start']+1}-{orf['end']}"
-            else:
-                header = f">{rec_id}:c({orf['start']+1}-{orf['end']})"
-            nt_seq = orf["sequence"]
-            prot_seq = str(Seq(nt_seq).translate(to_stop=False))
-            if prot_seq.endswith("*"):
-                prot_seq = prot_seq[:-1]
-            if len(nt_seq) < 244 and len(prot_seq) <= 81:
-                cds_records.append(f"{header}\n{nt_seq}")
-                prot_records.append(f"{header}\n{prot_seq}")
-    with open(cds_filename, "w") as f_cds:
-        f_cds.write("\n".join(cds_records) + "\n")
-    with open(prot_filename, "w") as f_prot:
-        f_prot.write("\n".join(prot_records) + "\n")
-
-###############################################################################
-# Route pour la page d'accueil (upload)
-@app.route("/", methods=["GET", "POST"])
+@app.route('/')
 def index():
-    if request.method == "POST":
-        # Récupère le fichier FASTA
-        fasta_file = request.files.get("fasta")
-        # Récupère les fichiers EMBL (upload multiple)
-        embl_files = request.files.getlist("embl_files")
-        # Récupère les noms de fichiers de sortie renseignés par l'utilisateur
-        output_cds = request.form.get("output_cds")
-        output_prot = request.form.get("output_prot")
-        
-        # Sauvegarde le fichier FASTA
-        fasta_filename = secure_filename(fasta_file.filename)
-        fasta_path = os.path.join(app.config["UPLOAD_FOLDER"], fasta_filename)
-        fasta_file.save(fasta_path)
-        
-        # Crée un dossier temporaire pour sauvegarder les fichiers EMBL
-        embl_dir = os.path.join(app.config["UPLOAD_FOLDER"], "embl_upload")
-        if not os.path.exists(embl_dir):
-            os.makedirs(embl_dir)
-        for file in embl_files:
-            filename = secure_filename(file.filename)
-            file.save(os.path.join(embl_dir, filename))
-        
-        # Définit les chemins complets pour les fichiers de sortie
-        output_cds_path = os.path.join(app.config["UPLOAD_FOLDER"], secure_filename(output_cds))
-        output_prot_path = os.path.join(app.config["UPLOAD_FOLDER"], secure_filename(output_prot))
-        
-        # Lance le traitement
-        process_inputs(fasta_path, embl_dir, output_cds_path, output_prot_path)
-        
-        # Redirige vers la page de téléchargement
-        return redirect(url_for("download", cds_file=output_cds, prot_file=output_prot))
-    return render_template("index.html")
+    return render_template('index.html')
 
-###############################################################################
-# Route pour afficher la page de téléchargement des résultats
-@app.route("/download")
-def download():
-    cds_file = request.args.get("cds_file")
-    prot_file = request.args.get("prot_file")
-    return f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <title>Download Results</title>
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    </head>
-    <body>
-        <div class="container mt-5">
-            <h1 class="text-center">Results Generated</h1>
-            <p class="text-center">Download your output files below:</p>
-            <div class="list-group">
-                <a href="/files/{cds_file}" class="list-group-item list-group-item-action">Download CDS file</a>
-                <a href="/files/{prot_file}" class="list-group-item list-group-item-action">Download Proteins file</a>
-            </div>
-        </div>
-        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    </body>
-    </html>
-    """
 
-###############################################################################
-# Route pour servir les fichiers de sortie
-@app.route("/files/<filename>")
-def files(filename):
-    filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-    return send_file(filepath, as_attachment=True)
+@app.route('/run', methods=['POST'])
+def run():
+    # 1) store uploads
+    work = tempfile.mkdtemp(prefix='scds_')
+    fasta = request.files['fasta']
+    fasta_path = os.path.join(work, safe(fasta.filename))
+    fasta.save(fasta_path)
 
-###############################################################################
-# Fonction regroupant le traitement des fichiers uploadés
-def process_inputs(fasta_path, embl_dir, output_cds_path, output_prot_path):
-    annotated_cdss = parse_embl_cds_from_directory(embl_dir)
-    orfs_results = scan_genome(fasta_path)
-    for record in orfs_results:
-        rec_id = record["id"]
-        if rec_id in annotated_cdss:
-            cds_intervals = annotated_cdss[rec_id]
-            new_orfs = []
-            for orf in record["orfs"]:
-                overlap = False
-                for cds in cds_intervals:
-                    cds_start, cds_end, _ = cds
-                    if orf["start"] < cds_end and orf["end"] > cds_start:
-                        # Affiche le message de filtrage uniquement pour les petits gènes (< 244 nt)
-                        if (orf["end"] - orf["start"]) < 244:
-                            print(f"Filtrage : sCDS {rec_id} {orf['start']+1}-{orf['end']} filtré (chevauche CDS annotée {cds_start+1}-{cds_end}).")
-                        overlap = True
-                        break
-                if not overlap:
-                    new_orfs.append(orf)
-            record["orfs"] = new_orfs
-    write_output(orfs_results, output_cds_path, output_prot_path)
+    embl_dir = os.path.join(work, 'embl')
+    os.makedirs(embl_dir, exist_ok=True)
+    for f in request.files.getlist('embl_files'):
+        f.save(os.path.join(embl_dir, safe(f.filename)))
 
-###############################################################################
-if __name__ == "__main__":
+    # 2) user options
+    outname = safe(request.form['output_name'])
+    use_up  = request.form.get('use_updated') == 'on'
+
+    # 3) build pipeline command
+    cmd = [
+        'bash',
+        os.path.join(BIN_DIR, 'pipeline_microannot_sCDS.sh'),
+        fasta_path,
+        embl_dir,
+        outname
+    ]
+    if use_up:
+        cmd.append('--use-updated')
+
+    # number of “Step N:” lines your script prints
+    TOTAL_STEPS = 7
+
+    def generate():
+        # kickoff
+        yield "<script>parent.updateProgress(0,'Initializing…');</script>\n"
+        proc = subprocess.Popen(
+            cmd, cwd=BASE_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True, bufsize=1
+        )
+
+        # stream stdout→browser
+        for line in proc.stdout:
+            esc = line.rstrip().replace("\\", "\\\\").replace("'", "\\'")
+            yield f"<script>parent.appendLog('{esc}\\n');</script>\n"
+
+            m = re.match(r'Step\s+(\d+):\s*(.+)', line)
+            if m:
+                idx, msg = int(m.group(1)), m.group(2).strip()
+                pct = int(idx / TOTAL_STEPS * 100)
+                yield f"<script>parent.updateProgress({pct},'{msg}');</script>\n"
+
+        proc.wait()
+
+        # copy the final output into result/
+        src = os.path.join(BASE_DIR, outname)
+        if proc.returncode == 0 and os.path.exists(src):
+            dst = os.path.join(RESULT_DIR, outname)
+            shutil.copy(src, dst)
+            link = url_for('download', filename=outname)
+            yield f"<script>parent.finishDownload('{link}');</script>\n"
+        else:
+            yield "<script>parent.appendLog('⚠️ no output generated');</script>\n"
+
+    return Response(stream_with_context(generate()), mimetype='text/html')
+
+
+@app.route('/download/<path:filename>')
+def download(filename):
+    # serve from result/
+    return send_from_directory(RESULT_DIR, filename, as_attachment=True)
+
+
+@app.route('/databases')
+def databases():
+    originals = []
+    # original ortholog DB
+    orth_dir = os.path.join(DATA_DIR, 'database_ortholog')
+    for f in sorted(os.listdir(orth_dir)):
+        originals.append((
+            'Ortholog DB', f,
+            url_for('download_db', category='ortholog', filename=f)
+        ))
+    # original non-ortholog DB
+    non_dir = os.path.join(DATA_DIR, 'database_not_ortholog')
+    for f in sorted(os.listdir(non_dir)):
+        originals.append((
+            'Non-ortholog DB', f,
+            url_for('download_db', category='nonortholog', filename=f)
+        ))
+
+    # any generated DBs in result/
+    generated = []
+    for f in sorted(os.listdir(RESULT_DIR)):
+        generated.append((
+            f,
+            url_for('download_db', category='generated', filename=f)
+        ))
+
+    return render_template('databases.html',
+                           originals=originals,
+                           generated=generated)
+
+
+@app.route('/download_db/<category>/<path:filename>')
+def download_db(category, filename):
+    if category == 'ortholog':
+        folder = os.path.join(DATA_DIR, 'database_ortholog')
+    elif category == 'nonortholog':
+        folder = os.path.join(DATA_DIR, 'database_not_ortholog')
+    elif category == 'generated':
+        folder = RESULT_DIR
+    else:
+        abort(404)
+    return send_from_directory(folder, filename, as_attachment=True)
+
+
+if __name__ == '__main__':
     app.run(debug=True, port=5001)
