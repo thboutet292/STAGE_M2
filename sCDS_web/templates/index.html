@@ -1,57 +1,143 @@
 <!DOCTYPE html>
 <html lang="en">
-	<head>
-		<meta charset="UTF-8">
-		<title>sCDS Detection Tool</title>
-		<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-		<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-	</head>
-	<body>
-		<div class="container mt-5">
-			<h1 class="text-center mb-4">sCDS Detection Tool</h1>
-			<div class="card">
-				<div class="card-body">
-					<form method="post" enctype="multipart/form-data">
-						<!-- Section pour le fichier FASTA -->
-						<div class="mb-3">
-							<label for="fasta" class="form-label">Genome FASTA file:</label>
-							<label for="fasta" class="btn btn-secondary" id="fastaLabel">Choose File</label>
-							<input type="file" name="fasta" id="fasta" class="d-none" required>
-							<span id="fastaFileName" class="ms-2"></span>
-						</div>
-						<!-- Section pour les fichiers EMBL via dossier -->
-						<div class="mb-3">
-							<label for="embl_files" class="form-label">EMBL folder:</label>
-							<label for="embl_files" class="btn btn-secondary" id="emblLabel">Choose Folder</label>
-							<input type="file" name="embl_files" id="embl_files" class="d-none" webkitdirectory directory multiple required>
-							<span id="emblFolderName" class="ms-2"></span>
-						</div>
-						<!-- Champs pour les noms de fichier de sortie -->
-						<div class="mb-3">
-							<label for="output_cds" class="form-label">Output CDS filename:</label>
-							<input type="text" name="output_cds" id="output_cds" class="form-control" value="result_CDS.fasta" required>
-						</div>
-						<div class="mb-3">
-							<label for="output_prot" class="form-label">Output Proteins filename:</label>
-							<input type="text" name="output_prot" id="output_prot" class="form-control" value="result_prot.fasta" required>
-						</div>
-						<button type="submit" class="btn btn-primary">Process Files</button>
-					</form>
-				</div>
-			</div>
-		</div>
-		<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-		<script>
-			// Pour le fichier FASTA
-			document.getElementById('fasta').addEventListener('change', function(){
-				var fileName = this.files[0] ? this.files[0].name : "No file chosen";
-				document.getElementById('fastaFileName').textContent = fileName;
-			});
-			// Pour le dossier EMBL, on peut afficher le nombre de fichiers sélectionnés
-			document.getElementById('embl_files').addEventListener('change', function(){
-				var count = this.files.length;
-				document.getElementById('emblFolderName').textContent = count + " files selected";
-			});
-		</script>
-	</body>
+<head>
+  <meta charset="UTF-8">
+  <title>MicroAnnot sCDS Detection</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+    rel="stylesheet">
+  <style>
+    body { background-color: #f4f7f9; }
+    .navbar { background-color: #343a40; }
+    .navbar-brand { font-weight: bold; font-size: 1.5rem; color: #fff; }
+    .card { margin-top: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    #log { height: 200px; overflow-y: auto; background: #fff; padding: .5rem; border: 1px solid #ccc; }
+    #download { margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <!-- Navbar -->
+  <nav class="navbar navbar-expand-lg navbar-dark">
+    <div class="container">
+      <a class="navbar-brand" href="{{ url_for('index') }}">MicroAnnot sCDS</a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
+              data-bs-target="#navMenu"><span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navMenu">
+        <ul class="navbar-nav ms-auto">
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('index') }}">Home</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('databases') }}">Databases</a>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container mt-5">
+    <!-- Upload Form -->
+    <div class="row justify-content-center">
+      <div class="col-md-8">
+        <div class="card">
+          <div class="card-header text-center"><h2>Upload Your Files</h2></div>
+          <div class="card-body">
+            <form method="post" action="{{ url_for('run') }}" target="run_frame"
+                  enctype="multipart/form-data">
+              <!-- Genome FASTA -->
+              <div class="mb-3">
+                <label class="form-label">Genome FASTA:</label><br>
+                <label for="fasta" class="btn btn-secondary">Choose FASTA</label>
+                <input type="file" name="fasta" id="fasta" class="d-none" required>
+                <span id="fastaFileName" class="ms-2">No file chosen</span>
+              </div>
+
+              <!-- EMBL folder -->
+              <div class="mb-3">
+                <label class="form-label">EMBL Annotations (folder):</label><br>
+                <label for="embl_files" class="btn btn-secondary">Choose Folder</label>
+                <input type="file" name="embl_files" id="embl_files" class="d-none"
+                       webkitdirectory directory multiple required>
+                <span id="emblFolderName" class="ms-2">No files chosen</span>
+                <div class="form-text">Select the directory containing your .embl files.</div>
+              </div>
+
+              <!-- Use updated DBs? -->
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="use_updated"
+                       name="use_updated">
+                <label class="form-check-label" for="use_updated">
+                  Use previously updated databases
+                </label>
+              </div>
+
+              <!-- Output filename -->
+              <div class="mb-3">
+                <label for="output_name" class="form-label">Result filename:</label>
+                <input type="text" name="output_name" id="output_name"
+                       class="form-control" value="final_sCDS.fasta" required>
+              </div>
+
+              <button type="submit" class="btn btn-primary w-100">Process</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Progress & Log -->
+    <div class="row justify-content-center mt-4">
+      <div class="col-md-8">
+        <div class="card p-3">
+          <h5>Progress</h5>
+          <div class="progress mb-2">
+            <div id="progressBar" class="progress-bar" role="progressbar"
+                 style="width: 0%;">0%</div>
+          </div>
+          <h6 id="currentStep">Waiting to start…</h6>
+          <pre id="log"></pre>
+          <div id="download"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden iframe -->
+  <iframe name="run_frame" style="display:none;"></iframe>
+
+  <footer class="text-center mt-5 mb-3">
+    <small>© 2025 LMGE</small>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // File selectors
+    document.getElementById('fasta').addEventListener('change', function(){
+      document.getElementById('fastaFileName').textContent =
+        this.files[0]?.name || 'No file chosen';
+    });
+    document.getElementById('embl_files').addEventListener('change', function(){
+      const cnt = this.files.length;
+      document.getElementById('emblFolderName').textContent =
+        cnt ? cnt + ' files selected' : 'No files chosen';
+    });
+    // Called by streamed JS
+    function updateProgress(pct, msg) {
+      document.getElementById('progressBar').style.width = pct + '%';
+      document.getElementById('progressBar').textContent = pct + '%';
+      document.getElementById('currentStep').textContent = msg;
+    }
+    function appendLog(txt) {
+      const log = document.getElementById('log');
+      log.textContent += txt;
+      log.scrollTop = log.scrollHeight;
+    }
+    function finishDownload(link) {
+      document.getElementById('download').innerHTML =
+        `<a href="${link}" class="btn btn-success mt-2">Download Result</a>`;
+    }
+  </script>
+</body>
 </html>
