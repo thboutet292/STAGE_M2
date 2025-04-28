@@ -10,7 +10,7 @@ COVERAGE_BLAST = 0.5								# Seuil couverture minimal pour BLASTP
 
 EVALUE_DB      = 1e-10								# Seuil E-value maximal pour tBLASTn
 IDENTITY_DB    = 80.0								# Seuil identité (%) minimal pour tBLASTn
-COVERAGE_DB    = 0.0								# Seuil couverture minimal pour tBLASTn
+COVERAGE_DB    = 0.0								# Seuil couverture minimal pour tBLASTn (0 car les blast sont fait contre le génome en entier)
 
 IDENTITY_DUP   = 100.0								# Identité (%) pour détecter duplications exactes
 COVERAGE_DUP   = 1.0								# Couverture (%) pour duplications exactes
