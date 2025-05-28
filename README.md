@@ -77,7 +77,7 @@ cd STAGE_M2/sCDS_web
 ```bash
 python bin/detect_sCDS.py
 ```
-> [!NOTE]  
+> **Note**
 > Ouvrez ensuite la page web via le lien indiqué dans le terminal, il devrait ressembler à 'http://localhost:5000'
 
 
