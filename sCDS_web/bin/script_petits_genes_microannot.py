@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import sys	#
+import sys	
 import os	
 import re	
 from Bio import SeqIO	
