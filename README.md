@@ -85,5 +85,13 @@ python bin/detect_sCDS.py
 > Si l'utilisateur préfère utiliser directement l'outil depuis le terminal cela est possible via :
 
 ```bash
-bin/pipeline_microannot_sCDS.sh <genome_fasta> <embl_directory> <output_fasta> [--use-updated]
+bash bin/pipeline_microannot_sCDS.sh <genome_fasta> <embl_directory> <output_fasta> [--use-updated]
 ```
++ <genome_fasta> = chemin vers le fichier FASTA du génome
++ <embl_directory> = chemin vers le répertoire contenant les fichiers EMBL de MicroAnnot correspondant au génome
++ <output_fasta> = nom du fichier de sortie
++ --use-updated = option pour utiliser les bases de données mises à jour, par default désactivé
+ 
+
+
+
