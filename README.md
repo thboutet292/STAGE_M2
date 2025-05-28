@@ -81,4 +81,9 @@ python bin/detect_sCDS.py
 > [!NOTE]  
 > Ouvrez ensuite la page web via le lien indiqué dans le terminal, il devrait ressembler à 'http://localhost:5000'
 
+> [!IMPORTANT]  
+> Si l'utilisateur préfère utiliser directement l'outil depuis le terminal cela est possible via :
 
+```bash
+bin/pipeline_microannot_sCDS.sh <genome_fasta> <embl_directory> <output_fasta> [--use-updated]
+```
