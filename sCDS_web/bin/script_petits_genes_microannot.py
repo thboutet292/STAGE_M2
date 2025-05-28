@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-import sys	# Pour la gestion des arguments de la ligne de commande
-import os	# Pour la gestion des fichiers et répertoires
-import re	# Pour les expressions régulières
-from Bio import SeqIO	# Pour lire les fichiers FASTA/EMBL via Biopython
-from Bio.Seq import Seq	# Pour manipuler des séquences biologiques avec Biopython
+import sys	#
+import os	
+import re	
+from Bio import SeqIO	
+from Bio.Seq import Seq	
 
 def get_short_id(header):
 	"""
