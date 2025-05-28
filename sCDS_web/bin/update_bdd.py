@@ -1,247 +1,398 @@
-#!/usr/bin/env python3										
-import sys, os, csv, shutil, re							
-from Bio import SeqIO								
-from Bio.SeqRecord import SeqRecord						
+#!/usr/bin/env python3
 
-# DEFINITION DES SEUILS
-EVALUE_BLAST   = 1e-5								# Seuil E-value maximal pour BLASTP
-IDENTITY_BLAST = 30.0								# Seuil identité (%) minimal pour BLASTP
-COVERAGE_BLAST = 0.5								# Seuil couverture minimal pour BLASTP
+import sys			 
+import os			
+import csv			
+import shutil		
+import re			
+from Bio import SeqIO			
+from Bio.SeqRecord import SeqRecord	
 
-EVALUE_DB      = 1e-10								# Seuil E-value maximal pour tBLASTn
-IDENTITY_DB    = 80.0								# Seuil identité (%) minimal pour tBLASTn
-COVERAGE_DB    = 0.0								# Seuil couverture minimal pour tBLASTn (0 car les blast sont fait contre le génome en entier)
+# Seuils de qualité et paramètres globaux
+EVALUE_BLAST   = 1e-5			# E-value maximal pour BLASTP
+IDENTITY_BLAST = 50.0			# Identité (%) minimale pour BLASTP
+COVERAGE_BLAST = 0.7			# Couverture minimale pour BLASTP
 
-IDENTITY_DUP   = 100.0								# Identité (%) pour détecter duplications exactes
-COVERAGE_DUP   = 1.0								# Couverture (%) pour duplications exactes
+EVALUE_DB      = 1e-5			# E-value maximal pour tBLASTn
+IDENTITY_DB    = 80.0			# Identité (%) minimale pour tBLASTn
+COVERAGE_DB    = 0.0			# Couverture minimale pour tBLASTn
 
-TRANSLATION_TABLE = 1								# Table de traduction standard pour Biopython
+IDENTITY_DUP   = 100.0			# Identité (%) pour duplication exacte
+COVERAGE_DUP   = 1.0			# Couverture pour duplication exacte
 
-DEFAULT_BDD1 = "data//database_ortholog/sCDS_ortholog.fasta"			# Chemin par défaut vers la base orthologue
-DEFAULT_BDD2 = "data/database_not_ortholog/sCDS_not_ortholog.fasta"		# Chemin par défaut vers la base non-orthologue
-BDD1_PATH    = os.environ.get("BDD1_PATH", DEFAULT_BDD1)			# Permet de surcharger le chemin de BDD1 via variable d’environnement
-BDD2_PATH    = os.environ.get("BDD2_PATH", DEFAULT_BDD2)			# Permet de surcharger le chemin de BDD2 via variable d’environnement
+TRANSLATION_TABLE = 1			# Table de traduction standard Biopython
 
-# DEFINITION DES FONCTIONS
+DEFAULT_BDD1 = "data//database_ortholog/sCDS_ortholog.fasta"
+DEFAULT_BDD2 = "data/database_not_ortholog/sCDS_not_ortholog.fasta"
+BDD1_PATH    = os.environ.get("BDD1_PATH", DEFAULT_BDD1)	# Chemin BDD1 (orthologues)
+BDD2_PATH    = os.environ.get("BDD2_PATH", DEFAULT_BDD2)	# Chemin BDD2 (non-orthologues)
 
-def normalize_id(s):										# Fonction pour normaliser un identifiant de contig
-	"""Garde tout avant le premier '.', '_' ou ':' afin d’extraire le nom du contig."""
-	return re.split(r"[._:]", s, 1)[0]							# Découpe la chaîne et retourne la première partie
+proteins_seen = set()		# Pour éviter d'enregistrer deux fois la même séquence protéique
 
-def backup(fp):											# Fonction pour créer une sauvegarde d’un FASTA
-	"""Copie fp vers fp_backup.fasta s’il existe."""
-	if os.path.isfile(fp):									# Vérifie si le fichier existe
-		bak = fp.replace('.fasta', '_backup.fasta')					# Construit le nom du fichier de sauvegarde
-		shutil.copy(fp, bak)								# Copie le fichier original vers la sauvegarde
-		print(f"[INFO] Backup created: {bak}")						# Informe l’utilisateur
+def normalize_id(s):
+	"""Garde tout avant le premier '.', '_' ou ':' pour extraire le nom du contig."""
+	return re.split(r"[._:]", s, 1)[0]
+
+def backup(fp):
+	"""Crée une sauvegarde fp_backup.fasta si le fichier existe."""
+	if os.path.isfile(fp):
+		bak = fp.replace('.fasta', '_backup.fasta')
+		shutil.copy(fp, bak)
+		print(f"[INFO] Backup created: {bak}")
 	else:
-		print(f"[WARN] {fp} not found, skipped backup.")				# Avertissement si le fichier n’existe pas
+		print(f"[WARN] {fp} not found, skipped backup.")
 
-def load_fasta(fp):										# Fonction pour charger un fichier FASTA
-	"""Charge un FASTA, retourne un dict id -> SeqRecord."""
-	return { rec.id: rec for rec in SeqIO.parse(fp, 'fasta') }				# Parcours le FASTA et crée un dict
+def load_fasta(fp):
+	"""Charge un fichier FASTA et retourne un dict id -> SeqRecord."""
+	return { rec.id: rec for rec in SeqIO.parse(fp, 'fasta') }
 
-def parse_blast(tab):										# Fonction pour parser la sortie BLASTP (outfmt6)
-	"""Parse BLASTP outfmt6  ->  dict qid -> liste de hits."""
-	hits = {}										# Initialise le dict des hits
-	with open(tab) as f:									# Ouvre le fichier BLASTP
-		reader = csv.reader(f, delimiter='\t')						# Lit en tant que CSV tabulé
-		for row in reader:								# Pour chaque ligne du fichier
-			if len(row) < 12: continue						# Ignore si moins de 12 colonnes
-			qid, sid = row[0], row[1]						# Récupère qid et sid
-			pid = float(row[2]); aln = int(row[3]); ev = float(row[10])		# Récupère %identity, longueur alignement, E-value
-			hits.setdefault(qid, []).append({					# Ajoute un hit à la liste pour qid
-				'sid': sid,							# Champ subject id complet
-				'sid_norm': normalize_id(sid),					# Champ subject id normalisé
-				'pid': pid,							# % identity
-				'alen': aln,							# alignment length
-				'ev': ev							# E-value
+def parse_blast(tab):
+	"""Parse BLASTP outfmt6 et retourne un dict qid -> liste de hits."""
+	hits = {}
+	with open(tab) as f:
+		reader = csv.reader(f, delimiter='\t')
+		for row in reader:
+			if len(row) < 12: continue	# Vérifie le bon format BLAST
+			qid, sid = row[0], row[1]	# Query et Subject
+			pid = float(row[2])			# % identité
+			aln = int(row[3])			# longueur alignement
+			ev = float(row[10])			# e-value
+			hits.setdefault(qid, []).append({
+				'sid': sid,
+				'sid_norm': normalize_id(sid),
+				'pid': pid,
+				'alen': aln,
+				'ev': ev
 			})
-	return hits										
+	return hits
 
-def parse_tblastn(tab):										# Fonction pour parser la sortie tBLASTn (outfmt6)
-	"""Parse tBLASTn outfmt6  ->  dict qid -> liste de hits avec contig_range."""
-	hits = {}										# Initialise le dict des hits
-	with open(tab) as f:									# Ouvre le fichier tBLASTn
-		reader = csv.reader(f, delimiter='\t')						# Lit en tant que CSV tabulé
-		for row in reader:								# Pour chaque ligne
-			if len(row) < 12: continue						# Ignore si moins de 12 colonnes
-			qid = row[0]								# Récupère qid
-			full_s = row[1]								# Récupère le subject complet
-			pid = float(row[2]); aln = int(row[3]); ev = float(row[10])		# Récupère %identity, alen, E-value
-			ss, se = int(row[8]), int(row[9])					# Récupère start et end sur le sujet
-			start, end = min(ss,se), max(ss,se)					# Garantit start < end
-			cont = normalize_id(full_s)						# Normalise l’identifiant du contig
-			cr = f"{cont}:{start}-{end}"						# Crée la chaîne contig_range
-			hits.setdefault(qid, []).append({					# Ajoute un hit
-				'contig_range': cr,							# Intervalle contig_range
-				'contig': cont,							# Nom du contig
-				'pid': pid,							# % identity
-				'alen': aln,							# alignment length
-				'ev': ev							# E-value
+def parse_tblastn(tab):
+	"""Parse tBLASTn outfmt6 -> dict qid -> liste de hits avec contig_range."""
+	hits = {}
+	with open(tab) as f:
+		reader = csv.reader(f, delimiter='\t')
+		for row in reader:
+			if len(row) < 12: continue
+			qid = row[0]				# Query
+			full_s = row[1]				# Subject
+			pid = float(row[2])			# % identité
+			aln = int(row[3])			# longueur alignement
+			ev = float(row[10])			# e-value
+			ss, se = int(row[8]), int(row[9])	# Start/end subject
+			if ss <= se:
+				cr = f"{normalize_id(full_s)}:{ss}-{se}"
+			else:
+				cr = f"{normalize_id(full_s)}:c({se}-{ss})"
+			hits.setdefault(qid, []).append({
+				'contig_range': cr,
+				'contig': normalize_id(full_s),
+				'pid': pid,
+				'alen': aln,
+				'ev': ev
 			})
-	return hits										# Retourne le dict des hits
+	return hits
 
-def cover(aln, length):										# Fonction pour calculer la couverture d’un alignement
-	"""Retourne aln/length, ou 0 si length == 0."""
-	return aln/length if length else 0							# Renvoie la fraction ou 0
+def cover(aln, length):
+	"""Retourne la couverture de l'alignement (aln/length) ou 0 si length == 0."""
+	return aln/length if length else 0
 
-def load_embl_cds(embl_dir):									# Fonction pour parser les CDS annotées dans EMBL
-	"""Parse tous les .embl pour extraire CDS annotées par contig."""
-	annot = {}										# Initialise le dict des annotations
-	for fn in os.listdir(embl_dir):								# Parcourt tous les fichiers du répertoire
-		if not fn.endswith('.embl'): continue						# Ignore les fichiers non .embl
-		path = os.path.join(embl_dir, fn)						# Construit le chemin complet
-		for rec in SeqIO.parse(path, 'embl'):						# Parse chaque record EMBL
-			cont = normalize_id(rec.id)						# Normalise l’ID du contig
-			for feat in rec.features:						# Parcourt les features
-				if feat.type=='CDS' and feat.location:				# Si la feature est de type CDS
-					a = int(feat.location.start)+1				# Récupère la position start (+1 pour conversion 0 -> 1)
-					b = int(feat.location.end)				# Récupère la position end
-					annot.setdefault(cont, []).append((a,b))		# Ajoute l’intervalle annoté
-	return annot										# Retourne dict contig -> [(start,end),...]
+def load_embl_cds(embl_dir):
+	"""Parse tous les .embl pour extraire les CDS annotées par contig."""
+	annot = {}
+	for fn in os.listdir(embl_dir):
+		if not fn.endswith('.embl'): continue
+		path = os.path.join(embl_dir, fn)
+		for rec in SeqIO.parse(path, 'embl'):
+			cont = normalize_id(rec.id)
+			for feat in rec.features:
+				if feat.type=='CDS' and feat.location:
+					a = int(feat.location.start)+1	# Début (1-based)
+					b = int(feat.location.end)		# Fin (1-based, inclusif)
+					annot.setdefault(cont, []).append((a,b))
+	return annot
 
-def inside_annotated(contig, s, e, annot):							# Fonction pour tester si un intervalle chevauche une annotation
-	"""Retourne True si [s,e] est contenu dans une CDS annotée du contig."""
-	for a,b in annot.get(contig, []):							# Parcourt les intervalles annotés pour ce contig
-		if s>=a and e<=b:								# Vérifie si l’intervalle testé est inclus
-			return True								# Retourne True si inclusion
-	return False										# Sinon retourne False
+def inside_annotated(contig, s, e, annot):
+	"""Vérifie si [s, e] est inclus dans une CDS annotée pour ce contig."""
+	for a, b in annot.get(contig, []):
+		if s >= a and e <= b:
+			return True, (a, b)
+	return False, None
 
-# ——— Main ——————————————————————————————————————————————
+def find_longest_M_window_around(seq, start, window_nt=15):
+	"""
+	Cherche tous les codons ATG dans une fenêtre définit autour de start.
+	Pour chaque ATG, traduit jusqu'au premier stop, et retourne la position (offset)
+	qui donne la protéine la plus longue. Renvoie (best_offset, best_prot) ou (None, None) si rien trouvé.
+	"""
+	start0 = start - 1	# start (1-based) vers index 0-based
+	best_offset = None
+	best_prot = ""
+	seq_len = len(seq)
+	# Fenêtre centrée sur start0 : de start0-window_nt à start0+window_nt
+	for offset in range(-window_nt, window_nt+1, 3):
+		pos = start0 + offset
+		if pos < 0 or pos+3 > seq_len:
+			continue
+		codon = str(seq[pos:pos+3])
+		if codon == "ATG":
+			prot_seq = seq[pos:].translate(table=TRANSLATION_TABLE)
+			prot_str = str(prot_seq)
+			if "*" in prot_str:
+				prot_str = prot_str[:prot_str.index("*")]
+			if len(prot_str) > len(best_prot):
+				best_prot = prot_str
+				best_offset = offset
+	if best_offset is not None:
+		return best_offset, best_prot
+	return None, None
 
-def main():											# Fonction principale du script
-	# Vérification des arguments
-	if len(sys.argv)!=8:									# Si le nombre d’arguments est incorrect
+def main():
+	# Vérification du nombre d'arguments
+	if len(sys.argv)!=8:
 		sys.exit("Usage: update_bdd.py blast1 blast2 tblastn prot_fa genome_fa out_fa embl_dir")
-	b1_tab, b2_tab, tbl_tab, prot_fa, genome_fa, out_fa, embl_dir = sys.argv[1:]		# Assigne les chemins reçus
+	# Récupération des chemins des fichiers d'entrée/sortie
+	b1_tab, b2_tab, tbl_tab, prot_fa, genome_fa, out_fa, embl_dir = sys.argv[1:]
 
-	# 0) Création de sauvegardes
-	backup(BDD1_PATH)									# Backup de BDD1 avant modification
-	backup(BDD2_PATH)									# Backup de BDD2 avant modification
+	# Sauvegarde des bases avant modification
+	backup(BDD1_PATH)
+	backup(BDD2_PATH)
 
-	# 1) Chargement des données et annotations
-	pred   = load_fasta(prot_fa)								# Charge les prédits sCDS
-	bdd1   = load_fasta(BDD1_PATH)								# Charge la base orthologue
-	bdd2   = load_fasta(BDD2_PATH)								# Charge la base non-orthologue
-	genome = { normalize_id(r.id): r for r in SeqIO.parse(genome_fa,'fasta') }		# Charge le génome en dict contig -> SeqRecord
-	contigs = set(genome.keys())								# Ensemble des noms de contigs du génome
-	annot   = load_embl_cds(embl_dir)							# Charge les annotations EMBL
+	# Chargement des données et annotations
+	pred   = load_fasta(prot_fa)
+	bdd1   = load_fasta(BDD1_PATH)
+	bdd2   = load_fasta(BDD2_PATH)
+	genome = { normalize_id(r.id): r for r in SeqIO.parse(genome_fa,'fasta') }
+	contigs = set(genome.keys())
+	annot   = load_embl_cds(embl_dir)
 
-	# 1b) Si le génome est déjà présent dans BDD1, on exporte simplement ces entrées
-	if contigs & { normalize_id(k) for k in bdd1 }:						# Intersection entre contigs et BDD1
+	# Si le génome est déjà dans la BDD1, export uniquement
+	if contigs & { normalize_id(k) for k in bdd1 }:
 		print("[INFO] Genome already in BDD1   ->  exporting existing entries")
-		with open(out_fa,'w') as out:							# Ouvre le fichier de sortie
-			for rid, rec in bdd1.items():						# Parcourt les enregistrements de BDD1
-				if normalize_id(rid) in contigs:				# Si le contig correspond
-					out.write(f">{rec.id} | BDD1\n{rec.seq}\n")		# Écrit en FASTA
-		return										# Termine l’exécution
+		with open(out_fa,'w') as out:
+			for rid, rec in bdd1.items():
+				if normalize_id(rid) in contigs:
+					out.write(f">{rec.id} | BDD1\n{rec.seq}\n")
+		return
 
-	# 2) Parsing des résultats BLAST
-	blast1  = parse_blast(b1_tab)								# Résultats BLASTP vs BDD1
-	blast2  = parse_blast(b2_tab)								# Résultats BLASTP vs BDD2
-	tblastn = parse_tblastn(tbl_tab)							# Résultats tBLASTn vs génome
+	# Parsing des résultats BLAST
+	blast1  = parse_blast(b1_tab)
+	blast2  = parse_blast(b2_tab)
+	tblastn = parse_tblastn(tbl_tab)
 
-	# 3) Initialisation des listes de nouvelles séquences
-	new1, new_q2, new_s2, new_t = [], [], [], []						# Listes pour stocker les IDs ajoutés
-	source_map, extracted = {}, {}								# Dictionnaires pour suivi et extraits
-	added2 = 0										# Compteur pour BDD2
+	new1, new_q2, new_s2, new_t = [], [], [], []
+	source_map, extracted = {}, {}
+	added2 = 0
 
-	# 4) Boucle BLASTP pour valider les prédits
-	for qid, rec in pred.items():								# Pour chaque protéine prédite
-		L = len(rec.seq)								# Longueur de la protéine
-		#  ->  recherche dans BDD1
-		for h in blast1.get(qid, []):									# Parcourt les hits BLAST1
-			cov = cover(h['alen'],L)								# Calcule la couverture
-			if h['pid']==IDENTITY_DUP and cov==COVERAGE_DUP: continue				# Ignore duplications exactes
-			if h['ev']<EVALUE_BLAST and h['pid']>=IDENTITY_BLAST and cov>=COVERAGE_BLAST:		# Si hit valide
-				if qid not in bdd1:								# Si non déjà dans BDD1
-					bdd1[qid]=rec								# Ajoute dans BDD1
-					new1.append(qid)							# Enregistre l’ID
-					source_map[qid]="BDD1"							# Mémorise la source
+	# Validation des prédits avec BLASTP
+	for qid, rec in pred.items():
+		L = len(rec.seq)
+		for h in blast1.get(qid, []):
+			cov = cover(h['alen'],L)
+			if h['pid']==IDENTITY_DUP and cov==COVERAGE_DUP: continue
+			if h['ev']<EVALUE_BLAST and h['pid']>=IDENTITY_BLAST and cov>=COVERAGE_BLAST:
+				if qid not in bdd1 and len(str(rec.seq)) > 6 and len(str(rec.seq)) < 81:	
+					bdd1[qid]=rec
+					new1.append(qid)
+					source_map[qid]="BDD1"
 				break
-													
-		#  ->  recherche dans BDD2
-		for h in blast2.get(qid, []):									# Parcourt les hits BLAST2
-			# Ignore si provenant du même génome
-			if h['sid_norm'] in contigs:								# Compare le contig normalisé
+		for h in blast2.get(qid, []):
+			if h['sid_norm'] in contigs:
 				print(f"[DEBUG] Skip BLAST2 {qid}  ->  {h['sid']} (same genome)")
-				continue									# Continue au hit suivant
-			cov = cover(h['alen'],L)								# Calcule la couverture
-			if h['pid']==IDENTITY_DUP and cov==COVERAGE_DUP: continue				# Ignore duplications exactes
-			if h['ev']<EVALUE_BLAST and h['pid']>=IDENTITY_BLAST and cov>=COVERAGE_BLAST:		# Si hit valide
-				sid = h['sid']									# Récupère l’ID du sujet
-				if sid in bdd2 and sid not in bdd1:						# Si sujet dans BDD2 mais pas BDD1
-					bdd1[sid]=bdd2.pop(sid)							# Déplace de BDD2 vers BDD1
-					new_s2.append(sid)							# Enregistre l’ID
-					source_map[sid]="BDD2"							# Mémorise la source
-				if qid not in bdd1:								# Si qid pas encore dans BDD1
-					bdd1[qid]=rec								# Ajoute qid
-					new_q2.append(qid)							# Enregistre l’ID
-					source_map[qid]="BDD2"							# Mémorise la source
-				break										# Sort de la boucle BLAST2
+				continue
+			cov = cover(h['alen'],L)
+			if h['pid']==IDENTITY_DUP and cov==COVERAGE_DUP: continue
+			if h['ev']<EVALUE_BLAST and h['pid']>=IDENTITY_BLAST and cov>=COVERAGE_BLAST:
+				sid = h['sid']
+				if sid in bdd2 and sid not in bdd1 and len(str(bdd2[sid].seq)) > 6 and len(str(bdd2[sid].seq)) < 81 :	
+					bdd1[sid]=bdd2.pop(sid)
+					new_s2.append(sid)
+					source_map[sid]="BDD2"
+				if qid not in bdd1 and len(str(rec.seq)) > 6 and len(str(rec.seq)) < 81:	
+					bdd1[qid]=rec
+					new_q2.append(qid)
+					source_map[qid]="BDD2"
+				break
 
-	# 5) Boucle tBLASTn pour extraire de nouvelles protéines
-	for qid, hits in tblastn.items():									# Pour chaque requête tBLASTn
-		for h in hits:											# Parcourt chaque hit
-			if h['contig'] in contigs:								# Si hit sur même génome
-				print(f"[DEBUG] Skip tBLASTn {h['contig_range']} (same genome)")
-				continue									# Continue au hit suivant
-			seq = genome[h['contig']].seq								# Séquence du contig
-			cov = cover(h['alen'],len(seq))								# Calcule la couverture
-			if h['pid']==IDENTITY_DUP and cov==COVERAGE_DUP: continue				# Ignore duplications exactes
-			if h['ev']>=EVALUE_DB or h['pid']<IDENTITY_DB or cov<COVERAGE_DB: continue		# Filtre par seuils
-			start,end = map(int, h['contig_range'].split(':',1)[1].split('-',1))			# Extrait les positions
-			if inside_annotated(h['contig'],start,end,annot):					# Si chevauche annotation
-				print(f"[INFO] Skip {h['contig_range']}: inside annotated CDS")
-				continue							
-				
-			stop = seq[end:end+3]									# Codon stop après intervalle
-			if len(stop)!=3 or stop.translate(table=TRANSLATION_TABLE)=='':				# Vérifie codon stop valide
-				print(f"[ERROR] No stop at {h['contig_range']}, skip")
-				continue							
-				
-			prot = seq[start-1:end].translate(table=TRANSLATION_TABLE)				# Traduit la région
-			if not prot or prot[0]!='M':								# Vérifie la présence d’un M initial
-				print(f"[INFO] Skip {h['contig_range']}: no start-M")	
-				continue							
-				
-			if h['contig_range'] not in extracted:							# Si pas déjà extrait
-				rec2 = SeqRecord(prot, id=h['contig_range'], description=f"tBLASTn|from:{qid}")
-				extracted[h['contig_range']] = rec2						# Stocke le SeqRecord
-				new_t.append(h['contig_range'])							# Enregistre l’intervalle
-				source_map[h['contig_range']] = "tBLASTn"					# Mémorise la source
-			break									
+	# Extraction de nouveaux sCDS depuis tBLASTn
+	for qid, hits in tblastn.items():
+		if normalize_id(qid) in contigs:
+			print(f"[DEBUG] Skip tBLASTn {qid} (query from same genome)")
+			continue
+		for h in hits:
+			seq = genome[h['contig']].seq
+			cov = cover(h['alen'], len(seq))
+			if h['pid'] == IDENTITY_DUP and cov == COVERAGE_DUP:
+				continue
+			if h['ev'] >= EVALUE_DB or h['pid'] < IDENTITY_DB or cov < COVERAGE_DB:
+				continue
+			range_str = h['contig_range'].split(':', 1)[1]
+			if range_str.startswith("c(") and range_str.endswith(")"):
+				start, end = map(int, range_str[2:-1].split('-'))
+				is_reverse = True
+			else:
+				start, end = map(int, range_str.split('-'))
+				is_reverse = False
+			is_in, ab = inside_annotated(h['contig'], start, end, annot)
+			if is_in:
+				print(f"[DEBUG] Skip tBLASTn {h['contig_range']} ({start}-{end}) : inside annotated CDS {ab[0]}-{ab[1]} on {h['contig']}")
+				continue
 
-	# 6) Ajout des prédits non trouvés  ->  BDD2
-	for qid, rec in pred.items():										# Pour chaque prédiction
-		if qid not in bdd1 and qid not in bdd2:								# Si non dans aucune base
-			bdd2[qid] = rec										# Ajoute dans BDD2
-			added2 += 1										# Incrémente compteur
+			# Extraction sens +
+			if not is_reverse:
+				seq_cds = seq[start-1:]
+				found_stop = False
+				for i in range(0, len(seq_cds)-2, 3):
+					codon = str(seq_cds[i:i+3])
+					if codon in ("TAA", "TAG", "TGA"):
+						found_stop = True
+						end_cds = start - 1 + i + 3
+						prot_seq = seq[start-1:end_cds].translate(table=TRANSLATION_TABLE)
+						prot_str = str(prot_seq)
+						# Si pas de M au début
+						if not prot_str or prot_str[0] != "M":
+							offset, best_prot = find_longest_M_window_around(seq, start, window_nt=60)
+							if offset is not None and best_prot and best_prot[0]=="M":
+								new_start = start + offset
+								stop_found = False
+								seq_cds2 = seq[new_start-1:]
+								for j in range(0, len(seq_cds2)-2, 3):
+									codon2 = str(seq_cds2[j:j+3])
+									if codon2 in ("TAA", "TAG", "TGA"):
+										stop_found = True
+										end_cds2 = new_start - 1 + j + 3
+										header = f"{h['contig']}:{new_start}-{end_cds2} | Mwindow"
+										# FILTRE TAILLE ICI
+										if best_prot and best_prot not in proteins_seen and len(best_prot) > 6 and len(best_prot) < 81:
+											rec2 = SeqRecord(best_prot, id=header, description="")
+											extracted[header] = rec2
+											new_t.append(header)
+											source_map[header] = "tBLASTn"
+											proteins_seen.add(best_prot)
+										else:
+											print(f"[INFO] Skip duplicate protein (window) or length: {header}")
+										break
+								if not stop_found:
+									print(f"[INFO] Skip {h['contig']}:{new_start}-... : no stop codon after best M")
+							else:
+								print(f"[INFO] Skip {h['contig']}:{start}-{end_cds}: no M found in window")
+							break
+						if '*' not in prot_str:
+							print(f"[INFO] Skip {h['contig']}:{start}-{end_cds}: no stop in translated sequence")
+							break
+						stop_index = prot_str.index('*')
+						prot_str = prot_str[:stop_index]
+						header = h['contig_range']
+						# FILTRE TAILLE ICI
+						if prot_str and prot_str not in proteins_seen and len(prot_str) > 6 and len(prot_str) < 81:
+							rec2 = SeqRecord(prot_str, id=header, description=f"tBLASTn|from:{qid}")
+							extracted[header] = rec2
+							new_t.append(header)
+							source_map[header] = "tBLASTn"
+							proteins_seen.add(prot_str)
+						else:
+							print(f"[INFO] Skip duplicate protein: {header}")
+						break
+				if not found_stop:
+					print(f"[INFO] Skip {h['contig']}:{start}-... : no stop codon found downstream")
+			# Extraction sens - (reverse complement)
+			else:
+				seq_rc = seq.reverse_complement()
+				genome_len = len(seq)
+				rc_start = genome_len - end + 1
+				seq_cds = seq_rc[rc_start-1:]
+				found_stop = False
+				for i in range(0, len(seq_cds)-2, 3):
+					codon = str(seq_cds[i:i+3])
+					if codon in ("TAA", "TAG", "TGA"):
+						found_stop = True
+						end_cds = rc_start - 1 + i + 3
+						prot_seq = seq_rc[rc_start-1:end_cds].translate(table=TRANSLATION_TABLE)
+						prot_str = str(prot_seq)
+						if not prot_str or prot_str[0] != "M":
+							offset, best_prot = find_longest_M_window_around(seq_rc, rc_start, window_nt=60)
+							if offset is not None and best_prot and best_prot[0]=="M":
+								new_rc_start = rc_start + offset
+								if new_rc_start < 1 or new_rc_start > genome_len:
+									break
+								stop_found = False
+								seq_cds2 = seq_rc[new_rc_start-1:]
+								for j in range(0, len(seq_cds2)-2, 3):
+									codon2 = str(seq_cds2[j:j+3])
+									if codon2 in ("TAA", "TAG", "TGA"):
+										stop_found = True
+										end_cds2 = new_rc_start - 1 + j + 3
+										new_genome_start = genome_len - (new_rc_start - 1)
+										new_genome_end   = genome_len - (end_cds2 - 1) + 1
+										header = f"{h['contig']}:c({min(new_genome_end,new_genome_start)}-{max(new_genome_end,new_genome_start)}) | Mwindow"
+										# FILTRE TAILLE ICI
+										if best_prot and best_prot not in proteins_seen and len(best_prot) > 6 and len(best_prot) < 81:
+											rec2 = SeqRecord(best_prot, id=header, description="")
+											extracted[header] = rec2
+											new_t.append(header)
+											source_map[header] = "tBLASTn"
+											proteins_seen.add(best_prot)
+										else:
+											print(f"[INFO] Skip duplicate protein (window) or length: {header}")
+										break
+								if not stop_found:
+									print(f"[INFO] Skip {h['contig']}:c({rc_start}-...): no stop codon after best M")
+							else:
+								print(f"[INFO] Skip {h['contig']}:c({start}-{end_cds}): no M found in window")
+							break
+						if '*' not in prot_str:
+							print(f"[INFO] Skip {h['contig']}:c({start}-{end_cds}): no stop in translated sequence")
+							break
+						stop_index = prot_str.index('*')
+						prot_str = prot_str[:stop_index]
+						header = h['contig_range']
+						# FILTRE TAILLE ICI
+						if prot_str and prot_str not in proteins_seen and len(prot_str) > 6 and len(prot_str) < 81:
+							rec2 = SeqRecord(prot_str, id=header, description=f"tBLASTn|from:{qid}")
+							extracted[header] = rec2
+							new_t.append(header)
+							source_map[header] = "tBLASTn"
+							proteins_seen.add(prot_str)
+						else:
+							print(f"[INFO] Skip duplicate protein: {header}")
+						break
+				if not found_stop:
+					print(f"[INFO] Skip {h['contig']}:c({start}-{end})-... : no stop codon found downstream")
+			break  # un seul hit par query
 
-	# 7) Écriture du fichier FASTA de sortie
-	with open(out_fa,'w') as out:										# Ouvre le fichier de sortie
-		# a) Proteines validées par BLASTP (uniquement issues de pred)
-		for q in [x for x in (new1+new_q2+new_s2) if x in pred]:					# Filtre pour garder q dans pred
-			out.write(f">{q} | {source_map[q]}\n{pred[q].seq}\n")					# Écrit le FASTA
-		# b) Proteines extraites par tBLASTn
-		for cr in new_t:										# Pour chaque contig_range extrait
-			rec2 = extracted[cr]					# Récupère le SeqRecord
-			out.write(f">{cr} | tBLASTn\n{rec2.seq}\n")		# Écrit le FASTA
+	# Ajout des prédits non trouvés dans BDD2, AVEC FILTRE TAILLE
+	for qid, rec in pred.items():
+		if qid not in bdd1 and qid not in bdd2 and len(str(rec.seq)) > 6 and len(str(rec.seq)) < 81:
+			bdd2[qid] = rec
+			added2 += 1
 
-	# 8) Sauvegarde des bases mises à jour
-	SeqIO.write(bdd1.values(), open(BDD1_PATH,'w'), 'fasta')		# Écrit BDD1 mise à jour
-	SeqIO.write(bdd2.values(), open(BDD2_PATH,'w'), 'fasta')		# Écrit BDD2 mise à jour
+	# Écriture du fichier FASTA de sortie (sécurité, refiltre la taille)
+	with open(out_fa, 'w') as out:
+		seqs_written = set()
+		for q in [x for x in (new1+new_q2+new_s2) if x in pred]:
+			seqstr = str(pred[q].seq)
+			if seqstr not in seqs_written :
+				out.write(f">{q} | {source_map[q]}\n{seqstr}\n")
+				seqs_written.add(seqstr)
+		for cr in new_t:
+			rec2 = extracted[cr]
+			seqstr = str(rec2.seq)
+			if seqstr not in seqs_written :
+				out.write(f">{cr} | tBLASTn\n{seqstr}\n")
+				seqs_written.add(seqstr)
 
-	# 9) Affichage du résumé
-	total1 = len(new1)+len(new_q2)+len(new_s2)+len(new_t)			# Nombre total ajouté à BDD1
-	print(f"\n[SUMMARY] Added to BDD1	: {total1}")
-	print(f"  - BLASTP  ->  BDD1 (orig)     : {len(new1)}")			# Détails BLASTP originaire
-	print(f"  - BLASTP  ->  BDD1 (via BDD2) : {len(new_q2)+len(new_s2)}")	# Détails BLASTP via BDD2
-	print(f"  - tBLASTn  ->  BDD1           : {len(new_t)}")		# Détails tBLASTn
-	print(f"[SUMMARY] Added to BDD2		: {added2}")			# Nombre ajouté à BDD2
-	print("[Done]")								
+	# Sauvegarde des BDD mises à jour
+	SeqIO.write(bdd1.values(), open(BDD1_PATH,'w'), 'fasta')
+	SeqIO.write(bdd2.values(), open(BDD2_PATH,'w'), 'fasta')
 
-if __name__=='__main__':									
-	main()									
+	# Affichage résumé
+	total1 = len(new1)+len(new_q2)+len(new_s2)+len(new_t)
+	print(f"\n[SUMMARY] Added to BDD1\t: {total1}")
+	print(f"  - BLASTP  ->  BDD1 (orig)     : {len(new1)}")
+	print(f"  - BLASTP  ->  BDD1 (via BDD2) : {len(new_q2)+len(new_s2)}")
+	print(f"  - tBLASTn  ->  BDD1           : {len(new_t)}")
+	print(f"[SUMMARY] Added to BDD2\t\t: {added2}")
+	print("[Done]")
+
+if __name__=='__main__':
+	main()
 
