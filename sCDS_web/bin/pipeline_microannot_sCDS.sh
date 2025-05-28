@@ -7,7 +7,6 @@
 #
 #   --use-updated : reuse the last‐updated DBs in data/ instead of copying fresh ones
 
-# ensure we pick up your conda BLAST+ and python
 export PATH="/home/thomas/anaconda3/envs/solo/bin:$PATH"
 
 set -euo pipefail
@@ -97,5 +96,5 @@ rm -f "$WORKDIR/data/merged_BDD.fasta"
 rm -f "$WORKDIR/data/BDD1_db".*
 rm -f "$WORKDIR/data/BDD2_db".*
 rm -f "$WORKDIR/data/genome_db".*
-# (leave your result/ and final output intact)
+
 
