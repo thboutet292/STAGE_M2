@@ -1,0 +1,3 @@
+Tool,Total Predicted,True Positives,Sensitivity (%),Specificity (%),False Positives,False Negatives,Database Reference,Database Gene Count
+Glimmer,1765,1697,95.28,96.15,68,84,Proteomes_O_pajunii.txt,1781
+Prodigal,1641,1581,88.77,96.34,60,200,Proteomes_O_pajunii.txt,1781

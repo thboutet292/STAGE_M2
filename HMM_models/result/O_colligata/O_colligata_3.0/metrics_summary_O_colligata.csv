@@ -1,0 +1,3 @@
+Tool,Total Predicted,True Positives,Sensitivity (%),Specificity (%),False Positives,False Negatives,Database Reference,Database Gene Count
+Glimmer,1776,1714,94.23,96.51,62,105,Proteomes_O_colligata.txt,1819
+Prodigal,1648,1579,86.81,95.81,69,240,Proteomes_O_colligata.txt,1819

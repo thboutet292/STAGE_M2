@@ -1,0 +1,3 @@
+Tool,Total Predicted,True Positives,Sensitivity (%),Specificity (%),False Positives,False Negatives,Database Reference,Database Gene Count
+Glimmer,2158,1876,93.1,86.93,282,139,Proteomes_A_locustae.txt,2015
+Prodigal,1747,1631,80.94,93.36,116,384,Proteomes_A_locustae.txt,2015

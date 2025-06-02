@@ -1,0 +1,3 @@
+Tool,Total Predicted,True Positives,Sensitivity (%),Specificity (%),False Positives,False Negatives,Database Reference,Database Gene Count
+Glimmer,2029,1869,94.39,92.11,160,111,Proteomes_E_cuniculi.txt,1980
+Prodigal,1808,1727,87.22,95.52,81,253,Proteomes_E_cuniculi.txt,1980

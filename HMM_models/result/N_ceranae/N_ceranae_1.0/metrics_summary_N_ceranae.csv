@@ -1,0 +1,3 @@
+Tool,Total Predicted,True Positives,Sensitivity (%),Specificity (%),False Positives,False Negatives,Database Reference,Database Gene Count
+Glimmer,3040,1847,92.03,60.76,1193,160,Proteomes_N_ceranae.txt,2007
+Prodigal,3639,1718,85.6,47.21,1921,289,Proteomes_N_ceranae.txt,2007

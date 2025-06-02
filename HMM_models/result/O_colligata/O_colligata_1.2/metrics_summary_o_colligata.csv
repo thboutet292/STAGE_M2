@@ -1,0 +1,5 @@
+Tool,Total Predicted,True Positives,Sensitivity (%),Specificity (%),False Positives,False Negatives,Database Reference,Database Gene Count
+Augustus,1542,1506,82.79,97.67,36,313,Proteomes_O_colligata.txt,1819
+Funannotate,1459,1198,65.86,82.11,261,621,Proteomes_O_colligata.txt,1819
+Glimmer,1783,1716,94.34,96.24,67,103,Proteomes_O_colligata.txt,1819
+Prodigal,1643,1575,86.59,95.86,68,244,Proteomes_O_colligata.txt,1819

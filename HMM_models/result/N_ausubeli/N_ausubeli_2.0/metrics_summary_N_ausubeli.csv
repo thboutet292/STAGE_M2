@@ -1,0 +1,3 @@
+Tool,Total Predicted,True Positives,Sensitivity (%),Specificity (%),False Positives,False Negatives,Database Reference,Database Gene Count
+Glimmer,2320,2137,96.7,92.11,183,73,Proteomes_N_ausubeli.txt,2210
+Prodigal,1998,1909,86.38,95.55,89,301,Proteomes_N_ausubeli.txt,2210
