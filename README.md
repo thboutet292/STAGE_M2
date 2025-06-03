@@ -85,9 +85,6 @@ sCDS_web/
 │   ├── work_sCDS_ortholog_backup.fasta
 │   └── work_sCDS_not_ortholog_backup.fasta
 ├── result/
-├── static/
-│   └── images/
-│       └── background.png
 └── templates/
     ├── index.html
     └── databases.html
