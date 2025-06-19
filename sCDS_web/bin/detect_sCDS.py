@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 import os
 import re
 import shutil
@@ -7,8 +8,8 @@ import tempfile
 
 from flask import (
     Flask, request, render_template,
-    redirect, url_for, Response,
-    stream_with_context, send_from_directory, abort
+    url_for, Response, stream_with_context,
+    send_from_directory, abort
 )
 
 BASE_DIR   = os.path.dirname(os.path.dirname(__file__))
@@ -20,12 +21,12 @@ os.makedirs(RESULT_DIR, exist_ok=True)
 app = Flask(__name__, template_folder=os.path.join(BASE_DIR, 'templates'))
 
 def safe(fn):
+    """Prevent directory traversal."""
     return os.path.basename(fn)
 
 @app.route('/')
 def index():
     return render_template('index.html')
-
 
 @app.route('/run', methods=['POST'])
 def run():
@@ -40,9 +41,10 @@ def run():
     for f in request.files.getlist('embl_files'):
         f.save(os.path.join(embl_dir, safe(f.filename)))
 
-    # 2) user options
+    # 2) user options + consent
     outname = safe(request.form['output_name'])
     use_up  = request.form.get('use_updated') == 'on'
+    consent = request.form.get('consent')     == 'on'
 
     # 3) build pipeline command
     cmd = [
@@ -55,24 +57,29 @@ def run():
     if use_up:
         cmd.append('--use-updated')
 
-    # number of “Step N:” lines your script prints
+    # 4) prepare env: skip DB update if no consent
+    env = os.environ.copy()
+    if not consent:
+        env['SKIP_DB_UPDATE'] = '1'
+
     TOTAL_STEPS = 7
 
     def generate():
-        # kickoff
+        # kickoff progress
         yield "<script>parent.updateProgress(0,'Initializing…');</script>\n"
+
         proc = subprocess.Popen(
-            cmd, cwd=BASE_DIR,
+            cmd,
+            cwd=BASE_DIR,
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True, bufsize=1
         )
 
-        # stream stdout→browser
         for line in proc.stdout:
             esc = line.rstrip().replace("\\", "\\\\").replace("'", "\\'")
             yield f"<script>parent.appendLog('{esc}\\n');</script>\n"
-
             m = re.match(r'Step\s+(\d+):\s*(.+)', line)
             if m:
                 idx, msg = int(m.group(1)), m.group(2).strip()
@@ -81,7 +88,6 @@ def run():
 
         proc.wait()
 
-        # copy the final output into result/
         src = os.path.join(BASE_DIR, outname)
         if proc.returncode == 0 and os.path.exists(src):
             dst = os.path.join(RESULT_DIR, outname)
@@ -96,35 +102,25 @@ def run():
 
 @app.route('/download/<path:filename>')
 def download(filename):
-    # serve from result/
     return send_from_directory(RESULT_DIR, filename, as_attachment=True)
 
 
 @app.route('/databases')
 def databases():
     originals = []
-    # original ortholog DB
     orth_dir = os.path.join(DATA_DIR, 'database_ortholog')
     for f in sorted(os.listdir(orth_dir)):
-        originals.append((
-            'Ortholog DB', f,
-            url_for('download_db', category='ortholog', filename=f)
-        ))
-    # original non-ortholog DB
+        originals.append(('Ortholog DB', f,
+            url_for('download_db', category='ortholog', filename=f)))
     non_dir = os.path.join(DATA_DIR, 'database_not_ortholog')
     for f in sorted(os.listdir(non_dir)):
-        originals.append((
-            'Non-ortholog DB', f,
-            url_for('download_db', category='nonortholog', filename=f)
-        ))
+        originals.append(('Non-ortholog DB', f,
+            url_for('download_db', category='nonortholog', filename=f)))
 
-    # any generated DBs in result/
     generated = []
     for f in sorted(os.listdir(RESULT_DIR)):
-        generated.append((
-            f,
-            url_for('download_db', category='generated', filename=f)
-        ))
+        generated.append((f,
+            url_for('download_db', category='generated', filename=f)))
 
     return render_template('databases.html',
                            originals=originals,
@@ -146,3 +142,4 @@ def download_db(category, filename):
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
+
