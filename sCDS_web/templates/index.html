@@ -44,7 +44,7 @@
         <div class="card">
           <div class="card-header text-center"><h2>Upload Your Files</h2></div>
           <div class="card-body">
-            <form method="post" action="{{ url_for('run') }}" target="run_frame"
+            <form id="uploadForm" method="post" action="{{ url_for('run') }}" target="run_frame"
                   enctype="multipart/form-data">
               <!-- Genome FASTA -->
               <div class="mb-3">
@@ -64,20 +64,32 @@
                 <div class="form-text">Select the directory containing your .embl files.</div>
               </div>
 
-              <!-- Use updated DBs? -->
-              <div class="form-check mb-3">
-                <input class="form-check-input" type="checkbox" id="use_updated"
-                       name="use_updated">
-                <label class="form-check-label" for="use_updated">
-                  Use previously updated databases
-                </label>
-              </div>
-
               <!-- Output filename -->
               <div class="mb-3">
                 <label for="output_name" class="form-label">Result filename:</label>
                 <input type="text" name="output_name" id="output_name"
                        class="form-control" value="final_sCDS.fasta" required>
+              </div>
+
+              <!-- Use updated DBs? -->
+              <div class="alert alert-info mb-3">
+                <div class="form-check mb-3">
+                  <input class="form-check-input" type="checkbox" id="use_updated"
+                         name="use_updated">
+                  <label class="form-check-label fw-bold" for="use_updated">
+                    Use previously updated databases
+                  </label>
+                </div>
+              </div>
+
+              <!-- Data Use Consent (optional) -->
+              <div class="alert alert-info mb-3">
+                <div class="form-check mb-3">
+                  <input class="form-check-input" type="checkbox" id="consent" name="consent">
+                  <label class="form-check-label fw-bold" for="consent">
+                    I consent to the use of my data to update the sCDS database.
+                  </label>
+                </div>
               </div>
 
               <button type="submit" class="btn btn-primary w-100">Process</button>
@@ -113,17 +125,39 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    // File selectors
-    document.getElementById('fasta').addEventListener('change', function(){
-      document.getElementById('fastaFileName').textContent =
-        this.files[0]?.name || 'No file chosen';
+    document.addEventListener('DOMContentLoaded', function() {
+      // File selectors
+      document.getElementById('fasta').addEventListener('change', function(){
+        document.getElementById('fastaFileName').textContent =
+          this.files[0]?.name || 'No file chosen';
+      });
+      document.getElementById('embl_files').addEventListener('change', function(){
+        const cnt = this.files.length;
+        document.getElementById('emblFolderName').textContent =
+          cnt ? cnt + ' files selected' : 'No files chosen';
+      });
+
+      // Interception du submit pour le consentement
+      const form = document.getElementById('uploadForm');
+      const consentCheckbox = document.getElementById('consent');
+      form.addEventListener('submit', function(e) {
+        if (!consentCheckbox.checked) {
+          e.preventDefault();
+          const msg =
+            "You did not consent to share your data for database updates.\n\n" +
+            "Sharing helps improve the public sCDS database.\n\n" +
+            "Press OK to proceed WITHOUT sharing, or Cancel to SHARE your data.";
+          const proceedWithout = confirm(msg);
+          if (!proceedWithout) {
+            // L’utilisateur souhaite partager : coche la case et renvoie
+            consentCheckbox.checked = true;
+          }
+          form.submit();
+        }
+      });
     });
-    document.getElementById('embl_files').addEventListener('change', function(){
-      const cnt = this.files.length;
-      document.getElementById('emblFolderName').textContent =
-        cnt ? cnt + ' files selected' : 'No files chosen';
-    });
-    // Called by streamed JS
+
+    // Functions appelées par le streaming
     function updateProgress(pct, msg) {
       document.getElementById('progressBar').style.width = pct + '%';
       document.getElementById('progressBar').textContent = pct + '%';
