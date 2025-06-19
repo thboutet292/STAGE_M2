@@ -8,6 +8,10 @@ import re
 from Bio import SeqIO			
 from Bio.SeqRecord import SeqRecord	
 
+# Nouveau flag : si défini à "1", on ne met pas à jour les BDD persistantes
+SKIP_DB_UPDATE = os.environ.get('SKIP_DB_UPDATE') == '1'
+
+
 # Seuils de qualité et paramètres globaux
 EVALUE_BLAST   = 1e-5			# E-value maximal pour BLASTP
 IDENTITY_BLAST = 50.0			# Identité (%) minimale pour BLASTP
@@ -154,8 +158,9 @@ def main():
 	b1_tab, b2_tab, tbl_tab, prot_fa, genome_fa, out_fa, embl_dir = sys.argv[1:]
 
 	# Sauvegarde des bases avant modification
-	backup(BDD1_PATH)
-	backup(BDD2_PATH)
+	if not SKIP_DB_UPDATE:
+		backup(BDD1_PATH)
+		backup(BDD2_PATH)
 
 	# Chargement des données et annotations
 	pred   = load_fasta(prot_fa)
@@ -164,15 +169,20 @@ def main():
 	genome = { normalize_id(r.id): r for r in SeqIO.parse(genome_fa,'fasta') }
 	contigs = set(genome.keys())
 	annot   = load_embl_cds(embl_dir)
-
+	
 	# Si le génome est déjà dans la BDD1, export uniquement
 	if contigs & { normalize_id(k) for k in bdd1 }:
-		print("[INFO] Genome already in BDD1   ->  exporting existing entries")
+		print("[INFO] Genome already in BDD1   ->  exporting existing entries (deduplicated by sequence)")
 		with open(out_fa,'w') as out:
+			seqs_written = set()
 			for rid, rec in bdd1.items():
 				if normalize_id(rid) in contigs:
-					out.write(f">{rec.id} | BDD1\n{rec.seq}\n")
+					seq_str = str(rec.seq)
+					if seq_str not in seqs_written:
+						out.write(f">{rec.id} | BDD1\n{seq_str}\n")
+						seqs_written.add(seq_str)
 		return
+
 
 	# Parsing des résultats BLAST
 	blast1  = parse_blast(b1_tab)
@@ -268,6 +278,8 @@ def main():
 											new_t.append(header)
 											source_map[header] = "tBLASTn"
 											proteins_seen.add(best_prot)
+											bdd1[header] = rec2		
+																				
 										else:
 											print(f"[INFO] Skip duplicate protein (window) or length: {header}")
 										break
@@ -289,8 +301,10 @@ def main():
 							new_t.append(header)
 							source_map[header] = "tBLASTn"
 							proteins_seen.add(prot_str)
+							bdd1[header] = rec2
 						else:
 							print(f"[INFO] Skip duplicate protein: {header}")
+
 						break
 				if not found_stop:
 					print(f"[INFO] Skip {h['contig']}:{start}-... : no stop codon found downstream")
@@ -331,6 +345,7 @@ def main():
 											new_t.append(header)
 											source_map[header] = "tBLASTn"
 											proteins_seen.add(best_prot)
+											bdd1[header] = rec2										
 										else:
 											print(f"[INFO] Skip duplicate protein (window) or length: {header}")
 										break
@@ -352,8 +367,10 @@ def main():
 							new_t.append(header)
 							source_map[header] = "tBLASTn"
 							proteins_seen.add(prot_str)
+							bdd1[header] = rec2
 						else:
 							print(f"[INFO] Skip duplicate protein: {header}")
+
 						break
 				if not found_stop:
 					print(f"[INFO] Skip {h['contig']}:c({start}-{end})-... : no stop codon found downstream")
@@ -367,22 +384,29 @@ def main():
 
 	# Écriture du fichier FASTA de sortie (sécurité, refiltre la taille)
 	with open(out_fa, 'w') as out:
-		seqs_written = set()
-		for q in [x for x in (new1+new_q2+new_s2) if x in pred]:
-			seqstr = str(pred[q].seq)
-			if seqstr not in seqs_written :
-				out.write(f">{q} | {source_map[q]}\n{seqstr}\n")
-				seqs_written.add(seqstr)
+		seq_dict = {}
+		# On collecte toutes les séquences uniques à partir de tous les headers générés
+		for q in (new1+new_q2+new_s2):
+			if q in pred:
+				seqstr = str(pred[q].seq)
+				# On ne garde que la première occurence de la séquence
+				if seqstr not in seq_dict:
+					seq_dict[seqstr] = f">{q} | {source_map[q]}"
 		for cr in new_t:
 			rec2 = extracted[cr]
 			seqstr = str(rec2.seq)
-			if seqstr not in seqs_written :
-				out.write(f">{cr} | tBLASTn\n{seqstr}\n")
-				seqs_written.add(seqstr)
+			if seqstr not in seq_dict:
+				seq_dict[seqstr] = f">{cr} | tBLASTn"
+		# Ecriture finale : chaque séquence une seule fois
+		for seqstr, header in seq_dict.items():
+			out.write(f"{header}\n{seqstr}\n")
+
+
 
 	# Sauvegarde des BDD mises à jour
-	SeqIO.write(bdd1.values(), open(BDD1_PATH,'w'), 'fasta')
-	SeqIO.write(bdd2.values(), open(BDD2_PATH,'w'), 'fasta')
+	if not SKIP_DB_UPDATE:
+		SeqIO.write(bdd1.values(), open(BDD1_PATH,'w'), 'fasta')
+		SeqIO.write(bdd2.values(), open(BDD2_PATH,'w'), 'fasta')
 
 	# Affichage résumé
 	total1 = len(new1)+len(new_q2)+len(new_s2)+len(new_t)
