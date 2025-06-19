@@ -7,9 +7,58 @@ Ce stage avait deux objectifs principaux à savoir la création de modèles HMM 
 - [Modèles HMM](#modeles-hmm)  
 - [Interface Web sCDS_web](#interface-web-scds_web)
 
-## Modeles HMM
+## Modèles HMM
 
-*EN TRAVAUX*
+Le pipeline **Modèles HMM** permet de générer des modèles de Markov cachés (HMM) à partir de gènes orthologues détectés par OrthoFinder, puis de les utiliser pour prédire les gènes d'une microsporidie donnée. Cet outil constitue une alternative optimisée à l'approche initiale basée sur des BLAST multiples de l'outil MicroAnnot.
+
+#### 1. Installer Miniconda (si nécessaire)
+
+```bash
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh
+bash ~/miniconda.sh -b -p $HOME/miniconda
+export PATH="$HOME/miniconda/bin:$PATH"
+```
+
+#### 2. Fermer et rouvrir le terminal ou recharger le profil
+
+```bash
+source ~/.bashrc
+```
+
+#### 3. Créer et activer l’environnement Conda dédié
+
+```bash
+conda create -n hmm_pipeline \
+    python=3.9 \
+    orthofinder \
+    mafft \
+    hmmer \
+    emboss \
+    seqkit \
+    prodigal \
+    glimmer \
+    cd-hit \
+    biopython \
+    augustus \
+    funannotate \
+    -c bioconda -c conda-forge -y
+
+conda activate hmm_pipeline
+```
+#### 4. Cloner le dépôt et se placer dans `HMM_models`
+
+```bash
+git clone https://github.com/thboutet292/STAGE_M2.git
+cd STAGE_M2/HMM_models
+```
+### 5. Lancer le pipeline
+
+```bash
+bash auto_gene_predict.sh <nom_microsporidie> <genome_fasta> <valeur_I>
+```
++ <genome_microsporidie> = mettre le nome de la microsporidie au format 'X_xxxx', exemple 'E_cuniculi'
++ <genome_fasta = chemin vers le répertoire contenant le fichier FASTA de la microsporidie étudié
++ <valeur_I> = valeur du paramètre d'inflation MCL d'OrthoFinder (valeur à choisir entre 1.0 et 5.0) 
 
 ---
 
@@ -36,9 +85,6 @@ sCDS_web/
 │   ├── work_sCDS_ortholog_backup.fasta
 │   └── work_sCDS_not_ortholog_backup.fasta
 ├── result/
-├── static/
-│   └── images/
-│       └── background.png
 └── templates/
     ├── index.html
     └── databases.html
